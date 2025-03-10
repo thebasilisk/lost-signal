@@ -12,6 +12,12 @@ mod utils;
 fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
     Float4(int_color.0 as f32 / 255.0, int_color.1 as f32 / 255.0, int_color.2 as f32 / 255.0, 1.0)
 }
+#[repr(C)]
+struct Uniforms {
+    screen_x : f32,
+    screen_y : f32,
+    last_vert : u32
+}
 
 fn main() {
     let view_width = 1024.0;
@@ -91,6 +97,7 @@ fn main() {
                 int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
                 color = color_convert(int_color);
                 vertex_data.append(&mut build_rect(x, y, width, height, 0.0, color));
+                let last_vert = vertex_data.len() as u32 - 4;
                 copy_to_buf(&vertex_data, &vert_buf);
                 let command_buffer = command_queue.new_command_buffer();
 
@@ -99,7 +106,7 @@ fn main() {
                 let render_descriptor = new_render_pass_descriptor(&texture);
 
                 let encoder = init_render_with_bufs(&vec![], &render_descriptor, &render_pipeline, command_buffer);
-                encoder.set_vertex_bytes(0, (size_of::<Float4>()) as u64, vec![Float4(view_width as f32, view_height as f32, 0.0, 0.0)].as_ptr() as *const _);
+                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, last_vert}].as_ptr() as *const _);
                 // encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * vertex_data.len()) as u64, vertex_data.as_ptr() as *const _);
                 encoder.set_vertex_buffer(1, Some(&vert_buf), 0);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
