@@ -164,7 +164,8 @@ fn main() {
                 let mut vertex_data = Vec::new();
                 int_color = hsv_to_rgb(stepped_hue(lerp_t), 1.0, 1.0);
                 color = color_convert(int_color);
-                vertex_data.append(&mut build_rect(x, y, width, height, 0.0, color));
+                let player_rect = build_rect(x, y, width, height, 0.0, color);
+                vertex_data.append(&mut player_rect.clone());
 
                 //check jumprope spawn
                 accum += random::<f64>();
@@ -188,11 +189,25 @@ fn main() {
 
                 //copying new vertex data per frame, not good but whatever
                 let mut path_count = 0;
+                let mut paths_to_remove = Vec::new();
                 for i in 0..path_positions.len() {
                     for j in 0..path_positions[i].len() {
                         path_positions[i][j].0 -= path_speed / fps;
-                        vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, projectile_width, projectile_height, 0.0, path_colors[i][j]));
-                        path_count += 1;
+                        let mut rect = build_rect(path_positions[i][j].0, path_positions[i][j].1, projectile_width, projectile_height, 0.0, path_colors[i][j]);
+                        if rect_intersect(&player_rect, &rect) {
+                            if player_rect[0].color != rect[0].color {
+                                for k in 0..4 {
+                                    vertex_data[k].color = Float4(1.0, 0.0, 0.0, 1.0);
+                                    health -= 1;
+                                }
+                            } else {
+                                signal_lost += 0.25;
+                            }
+                            paths_to_remove.insert(0, (i,j));
+                        } else {
+                            vertex_data.append(&mut rect);
+                            path_count += 1;
+                        }
                     }
                     if path_positions[i].last().unwrap().0 < (path_width * -0.45) + path_x {
                         path_positions[i].push(Float2(path_x + (random::<f32>() * 1.5 * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height + (random::<f32>() - 0.5) * path_height));
@@ -202,6 +217,10 @@ fn main() {
                         path_positions[i].remove(0);
                         path_colors[i].remove(0);
                     }
+                }
+                for (i,j) in paths_to_remove {
+                    path_positions[i].remove(j);
+                    path_colors[i].remove(j);
                 }
                 let last_vert = vertex_data.len() as u32 - 4;
 
@@ -215,23 +234,23 @@ fn main() {
 
                 // let mut chunk_number = 1;
                 // let mut collision = 999;
-                for rect in rects {
-                    if rect_intersect(player, rect) {
-                        if player[0].color != rect[0].color {
-                            for i in 0..4 {
-                                player[i].color = Float4(1.0, 0.0, 0.0, 1.0);
-                                health -= 1;
-                                // collision = chunk_number
-                            }
-                        } else {
-                            signal_lost += 0.01;
-                        }
-                    }
-                    // chunk_number += 1;
-                }
-                if health == 0 {
-                    println!("You lose!");
-                    unsafe { app.terminate(None) };
+                // for rect in rects {
+                //     if rect_intersect(player, rect) {
+                        // if player[0].color != rect[0].color {
+                        //     for i in 0..4 {
+                        //         player[i].color = Float4(1.0, 0.0, 0.0, 1.0);
+                        //         health -= 1;
+                        //         // collision = chunk_number
+                        //     }
+                        // } else {
+                        //     signal_lost += 0.01;
+                        // }
+                //     }
+                //     // chunk_number += 1;
+                // }
+                if health <= 0 {
+                    // println!("You lose!");
+                    // unsafe { app.terminate(None) };
                 }
                 let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 // let goal_rect = goal_verts.iter().map(|val| val.position).collect::<Vec<Float4>>();
