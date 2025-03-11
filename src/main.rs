@@ -58,7 +58,8 @@ fn main() {
     let goal_y = 600.0;
     let goal_width = 100.0;
     let goal_height = 100.0;
-    let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0));
+    let goal_t = random::<f64>();
+    let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
 
 
     let num_path_spawns = 20;
@@ -134,7 +135,6 @@ fn main() {
                 let drawable = layer.next_drawable().unwrap();
                 let texture = drawable.texture();
                 let render_descriptor = new_render_pass_descriptor(&texture);
-                let goal_descriptor = new_render_pass_descriptor(&texture);
 
                 let encoder = init_render_with_bufs(&vec![], &render_descriptor, &render_pipeline, command_buffer);
                 encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius, last_vert}].as_ptr() as *const _);
@@ -150,6 +150,9 @@ fn main() {
                 let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 encoder.set_render_pipeline_state(&goal_pipeline);
                 encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * 4) as u64, goal_verts.as_ptr() as *const _);
+
+                // println!("{}", lerp_t - goal_t);
+                encoder.set_fragment_bytes(0, size_of::<f32>() as u64, vec![(lerp_t - goal_t).abs() as f32 * 10.0].as_ptr() as *const _);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
                 encoder.end_encoding();
 

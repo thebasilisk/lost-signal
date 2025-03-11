@@ -54,7 +54,10 @@ fragment float4 box_fragment (
 }
 
 fragment float4 goal_fragment (
+    const device float *t,
     ColorInOut in [[stage_in]]
 ) {
-    return in.color;
+    float clamped_t = saturate(t[0]);
+    float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), 1.0);
+    return mix(in.color, grayscaled, clamped_t);
 }
