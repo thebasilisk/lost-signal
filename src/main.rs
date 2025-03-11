@@ -14,11 +14,31 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
     Float4(int_color.0 as f32 / 255.0, int_color.1 as f32 / 255.0, int_color.2 as f32 / 255.0, 1.0)
 }
 
+//  jumprope vertical
+//      full screen colored band
+//      maybe shifting color slightly because telegraphed
+//      would be cool if particles at end to make it more substantial
+//  laser horizontal
+//      speed tuning is the most important thing
+//      single colored, fx unclear maybe ghosting trail
+//  clusterbomb thingy maybe
+//      lob out then explode, circle on ground is important
+//  chasers
+//      following player with simple predictable pattern
+//      maybe should choose direction + lunge
+//      touching one with same color clears it, maybe fade out
+//
+//  want to decide on whether same color is safe or different color is safe
+//  I think same color being safe makes sense, then also as you lose signal you have to just dodge
+//  unclear what that means for the jumpropes, maybe color band is pretty lenient
+
+
 const COLOR_STEPS : u32 = 12;
 fn stepped_hue(t : f64) -> f64 {
+    let hue_step = 360 / COLOR_STEPS;
     let hue = t * 360.0;
-    let int_hue = hue as u32 / COLOR_STEPS;
-    (int_hue * COLOR_STEPS) as f64
+    let int_hue = hue as u32 / hue_step;
+    (int_hue * hue_step) as f64
 }
 
 #[repr(C)]
@@ -45,6 +65,7 @@ fn main() {
     let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "goal_fragment", &shaderlib);
     let command_queue = device.new_command_queue();
 
+    //player params
     let mut x = 0.0;
     let mut y = 0.0;
     let player_speed = 600.0;
@@ -55,6 +76,7 @@ fn main() {
     let mut int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
     let mut color = color_convert(int_color);
 
+    // spawning target and storing color
     let goal_x = 0.0;
     let goal_y = 600.0;
     let goal_width = 100.0;
@@ -63,7 +85,8 @@ fn main() {
     let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
 
 
-    let num_path_spawns = 7;
+    //spawning lasers
+    let num_path_spawns = 5;
     let mut path_positions : Vec<Vec<Float2>> = vec![Vec::new(); num_path_spawns];
     let mut path_colors : Vec<Vec<Float4>> = vec![Vec::new(); num_path_spawns];
     let path_x = 1024.0;
@@ -74,19 +97,35 @@ fn main() {
     let projectile_width = 100.0;
     let projectile_height =  projectile_width / 5.0;
 
-    //make vec of paths for each spawn point
-    //check last spawn for passing threshold
-    //spawn new = append new to proper spawn
     for i in 0..num_path_spawns {
         path_positions[i].push(Float2(path_x + (random::<f32>() * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height));
         path_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
     }
+    // redundant work, done later
     let mut vertex_data = Vec::new();
     for i in 0..path_positions.len() {
         for j in 0..path_positions[i].len() {
             vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, path_width, path_height, 0.0, path_colors[i][j]));
         }
     }
+
+    //jumprope params
+    let mut accum = 0.0;
+    let jumprope_spawn_threshold = 100.0;
+    let jumprope_limit = 4;
+
+    let jumprope_speed = 200.0;
+    let jumprope_x = 0.0;
+    let jumprope_y = view_height;
+    let jumprope_width = view_width * 2.5;
+    let jumprope_height = projectile_height;
+
+    let mut jumprope_positions = Vec::new();
+    let mut jumprope_ts = Vec::new();
+
+    //spawn initial jumprope
+    jumprope_positions.push(jumprope_y);
+    jumprope_ts.push(random::<f64>());
 
     let vert_buf = device.new_buffer_with_data(
         vertex_data.as_ptr() as *const _,
@@ -121,6 +160,28 @@ fn main() {
                 int_color = hsv_to_rgb(stepped_hue(lerp_t), 1.0, 1.0);
                 color = color_convert(int_color);
                 vertex_data.append(&mut build_rect(x, y, width, height, 0.0, color));
+
+                //check jumprope spawn
+                accum += random::<f64>();
+                if accum >= jumprope_spawn_threshold  && jumprope_positions.len() < jumprope_limit {
+                    jumprope_positions.push(jumprope_y);
+                    jumprope_ts.push(random());
+                    accum = 0.0;
+                }
+
+                //build jumprope and move by speed
+                for i in 0..jumprope_positions.len() {
+                    jumprope_positions[i] -= jumprope_speed / fps;
+                    vertex_data.append(&mut build_rect(jumprope_x, jumprope_positions[i], jumprope_width, jumprope_height, 0.0, color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
+                }
+
+                //remove old jumpropes
+                if jumprope_positions.first().is_some_and(|&val| val < -view_height) {
+                    jumprope_positions.remove(0);
+                    jumprope_ts.remove(0);
+                }
+
+                //copying new vertex data per frame, not good but whatever
                 let mut path_count = 0;
                 for i in 0..path_positions.len() {
                     for j in 0..path_positions[i].len() {
@@ -154,9 +215,10 @@ fn main() {
                 encoder.set_fragment_bytes(1, size_of::<Float2>() as u64, vec![Float2(x, y)].as_ptr() as *const _);
                 encoder.set_fragment_bytes(2, (size_of::<f32>()) as u64, vec![signal_lost].as_ptr() as *const _);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
-                for i in 0..path_count {
+                for i in 0..path_count + jumprope_positions.len() {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
                 }
+
 
                 let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 encoder.set_render_pipeline_state(&goal_pipeline);
@@ -178,7 +240,7 @@ fn main() {
                         Some(ref e) => {
                             match e.r#type() {
                                 NSEventType::MouseMoved => {
-                                    lerp_t += e.deltaX() / view_width;
+                                    lerp_t += e.deltaX() / view_width as f64;
                                     lerp_t = lerp_t.max(0.0).min(1.0);
                                     app.sendEvent(e);
                                 },
