@@ -41,6 +41,7 @@ vertex ColorInOut box_vertex (
 fragment float4 box_fragment (
     const device uniforms *unis,
     const device float2 *player_pos,
+    const device float *signal_lost,
     ColorInOut in [[ stage_in ]]
 ) {
     float screen_x = unis[0].screen_x;
@@ -48,7 +49,7 @@ fragment float4 box_fragment (
     float radius = unis[0].radius;
     float2 pos_norm = float2((player_pos[0].x + screen_x) / 2.0, (-player_pos[0].y + screen_y) / 2.0);
     float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), 1.0);
-    float t = saturate(distance(pos_norm, in.position.xy) / radius);
+    float t = saturate((distance(pos_norm, in.position.xy) / radius) + signal_lost[0]);
     float4 color_out = mix(in.color, grayscaled, t);
     return color_out;
 }

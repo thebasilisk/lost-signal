@@ -13,7 +13,7 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
     Float4(int_color.0 as f32 / 255.0, int_color.1 as f32 / 255.0, int_color.2 as f32 / 255.0, 1.0)
 }
 
-const COLOR_STEPS : u32 = 36;
+const COLOR_STEPS : u32 = 12;
 fn stepped_hue(t : f64) -> f64 {
     let hue = t * 360.0;
     let int_hue = hue as u32 / COLOR_STEPS;
@@ -62,13 +62,13 @@ fn main() {
     let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
 
 
-    let num_path_spawns = 20;
+    let num_path_spawns = 15;
     let mut path_positions : Vec<Vec<Float2>> = vec![Vec::new(); num_path_spawns];
     let mut path_colors : Vec<Vec<Float4>> = vec![Vec::new(); num_path_spawns];
     let path_x = 1024.0;
     let path_width = 150.0;
     let path_height = (2.0 * view_height) / num_path_spawns as f32;
-    let path_speed = 5.0 * 60.0;
+    let path_speed = 10.0 * 60.0;
 
     let projectile_width = 60.0;
     let projectile_height = path_height / 5.0;
@@ -89,6 +89,7 @@ fn main() {
 
     let vert_buf = make_buf(&vertex_data, &device);
     let radius = 300.0;
+    let mut signal_lost = 0.0;
     loop {
         autoreleasepool(|_| {
             if app.windows().is_empty() {
@@ -99,10 +100,12 @@ fn main() {
                 frames += 1;
 
                 for key in keys_pressed.iter() {
+                    // println!("{key}");
                     match key {
                         0 => x -= player_speed / fps,
                         1 => y -= player_speed / fps,
                         2 => x += player_speed / fps,
+                        14 => signal_lost += 0.1 / fps,
                         13 => y += player_speed / fps,
                         _ => ()
                     }
@@ -142,6 +145,7 @@ fn main() {
                 encoder.set_vertex_buffer(1, Some(&vert_buf), 0);
                 encoder.set_fragment_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius, last_vert}].as_ptr() as *const _);
                 encoder.set_fragment_bytes(1, size_of::<Float2>() as u64, vec![Float2(x, y)].as_ptr() as *const _);
+                encoder.set_fragment_bytes(2, (size_of::<f32>()) as u64, vec![signal_lost].as_ptr() as *const _);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
                 for i in 0..path_count {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
