@@ -12,11 +12,20 @@ mod utils;
 fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
     Float4(int_color.0 as f32 / 255.0, int_color.1 as f32 / 255.0, int_color.2 as f32 / 255.0, 1.0)
 }
+
+const COLOR_STEPS : u32 = 36;
+fn stepped_hue(t : f64) -> f64 {
+    let hue = t * 360.0;
+    let int_hue = hue as u32 / COLOR_STEPS;
+    (int_hue * COLOR_STEPS) as f64
+}
+
 #[repr(C)]
 struct Uniforms {
     screen_x : f32,
     screen_y : f32,
-    radius : f32
+    radius : f32,
+    last_vert : u32
 }
 
 fn main() {
@@ -32,6 +41,7 @@ fn main() {
     let shaderlib = get_library(&device);
 
     let render_pipeline = prepare_pipeline_state(&device, "box_vertex", "box_fragment", &shaderlib);
+    let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "goal_fragment", &shaderlib);
     let command_queue = device.new_command_queue();
 
     let mut x = 0.0;
@@ -44,21 +54,30 @@ fn main() {
     let mut int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
     let mut color = color_convert(int_color);
 
+    let goal_x = 0.0;
+    let goal_y = 600.0;
+    let goal_width = 100.0;
+    let goal_height = 100.0;
+    let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0));
+
 
     let num_path_spawns = 20;
     let mut path_positions : Vec<Vec<Float2>> = vec![Vec::new(); num_path_spawns];
     let mut path_colors : Vec<Vec<Float4>> = vec![Vec::new(); num_path_spawns];
     let path_x = 1024.0;
-    let path_height = (2.0 * view_height) / num_path_spawns as f32;
     let path_width = 150.0;
+    let path_height = (2.0 * view_height) / num_path_spawns as f32;
     let path_speed = 5.0 * 60.0;
+
+    let projectile_width = 60.0;
+    let projectile_height = path_height / 5.0;
 
     //make vec of paths for each spawn point
     //check last spawn for passing threshold
     //spawn new = append new to proper spawn
     for i in 0..num_path_spawns {
         path_positions[i].push(Float2(path_x + (random::<f32>() * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height));
-        path_colors[i].push(color_convert(hsv_to_rgb(random::<f64>() * 360.0, 1.0, 1.0)));
+        path_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
     }
     let mut vertex_data = Vec::new();
     for i in 0..path_positions.len() {
@@ -89,43 +108,49 @@ fn main() {
                 }
 
                 let mut vertex_data = Vec::new();
+                int_color = hsv_to_rgb(stepped_hue(lerp_t), 1.0, 1.0);
+                color = color_convert(int_color);
+                vertex_data.append(&mut build_rect(x, y, width, height, 0.0, color));
                 let mut path_count = 0;
                 for i in 0..path_positions.len() {
                     for j in 0..path_positions[i].len() {
                         path_positions[i][j].0 -= path_speed / fps;
-                        vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, path_width, path_height, 0.0, path_colors[i][j]));
+                        vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, projectile_width, projectile_height, 0.0, path_colors[i][j]));
                         path_count += 1;
                     }
                     if path_positions[i].last().unwrap().0 < (path_width * -0.45) + path_x {
-                        path_positions[i].push(Float2(path_x + (path_width * 0.5), ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height));
-                        path_colors[i].push(color_convert(hsv_to_rgb(random::<f64>() * 360.0, 1.0, 1.0)));
+                        path_positions[i].push(Float2(path_x + (random::<f32>() * 1.5 * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height + (random::<f32>() - 0.5) * path_height));
+                        path_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
                     }
                     if path_positions[i].first().unwrap().0 < (path_width * -0.55) - path_x {
                         path_positions[i].remove(0);
                         path_colors[i].remove(0);
                     }
                 }
-                int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
-                color = color_convert(int_color);
-                vertex_data.append(&mut build_rect(x, y, width, height, 0.0, color));
-                // let last_vert = vertex_data.len() as u32 - 4;
+                let last_vert = vertex_data.len() as u32 - 4;
                 copy_to_buf(&vertex_data, &vert_buf);
                 let command_buffer = command_queue.new_command_buffer();
 
                 let drawable = layer.next_drawable().unwrap();
                 let texture = drawable.texture();
                 let render_descriptor = new_render_pass_descriptor(&texture);
+                let goal_descriptor = new_render_pass_descriptor(&texture);
 
                 let encoder = init_render_with_bufs(&vec![], &render_descriptor, &render_pipeline, command_buffer);
-                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius}].as_ptr() as *const _);
+                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius, last_vert}].as_ptr() as *const _);
                 // encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * vertex_data.len()) as u64, vertex_data.as_ptr() as *const _);
                 encoder.set_vertex_buffer(1, Some(&vert_buf), 0);
-                encoder.set_fragment_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius}].as_ptr() as *const _);
+                encoder.set_fragment_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius, last_vert}].as_ptr() as *const _);
                 encoder.set_fragment_bytes(1, size_of::<Float2>() as u64, vec![Float2(x, y)].as_ptr() as *const _);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
                 for i in 0..path_count {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
                 }
+
+                let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
+                encoder.set_render_pipeline_state(&goal_pipeline);
+                encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * 4) as u64, goal_verts.as_ptr() as *const _);
+                encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
                 encoder.end_encoding();
 
                 command_buffer.present_drawable(drawable);

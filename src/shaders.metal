@@ -52,3 +52,9 @@ fragment float4 box_fragment (
     float4 color_out = mix(in.color, grayscaled, t);
     return color_out;
 }
+
+fragment float4 goal_fragment (
+    ColorInOut in [[stage_in]]
+) {
+    return in.color;
+}
