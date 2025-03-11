@@ -16,7 +16,7 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
 struct Uniforms {
     screen_x : f32,
     screen_y : f32,
-    last_vert : u32
+    radius : f32
 }
 
 fn main() {
@@ -25,6 +25,7 @@ fn main() {
     let fps = 60.0f32;
     let mut frames = 0;
     let mut frame_time = get_next_frame(fps as f64);
+    let mut keys_pressed = vec![112];
 
     let (app, window, device, layer) = simple_app(view_width as f64, view_height as f64, "Colorstep");
 
@@ -33,9 +34,10 @@ fn main() {
     let render_pipeline = prepare_pipeline_state(&device, "box_vertex", "box_fragment", &shaderlib);
     let command_queue = device.new_command_queue();
 
-    let x = 0.0;
-    let y = 0.0;
-    let width = 100.0;
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let player_speed = 600.0;
+    let width = 50.0;
     let height = width;
 
     let mut lerp_t = 0.0;
@@ -49,7 +51,7 @@ fn main() {
     let path_x = 1024.0;
     let path_height = (2.0 * view_height) / num_path_spawns as f32;
     let path_width = 150.0;
-    let path_speed = 10.0;
+    let path_speed = 5.0 * 60.0;
 
     //make vec of paths for each spawn point
     //check last spawn for passing threshold
@@ -61,13 +63,12 @@ fn main() {
     let mut vertex_data = Vec::new();
     for i in 0..path_positions.len() {
         for j in 0..path_positions[i].len() {
-            path_positions[i][j].0 -= path_speed;
             vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, path_width, path_height, 0.0, path_colors[i][j]));
         }
     }
 
     let vert_buf = make_buf(&vertex_data, &device);
-
+    let radius = 300.0;
     loop {
         autoreleasepool(|_| {
             if app.windows().is_empty() {
@@ -77,11 +78,21 @@ fn main() {
                 frame_time = get_next_frame(fps as f64);
                 frames += 1;
 
+                for key in keys_pressed.iter() {
+                    match key {
+                        0 => x -= player_speed / fps,
+                        1 => y -= player_speed / fps,
+                        2 => x += player_speed / fps,
+                        13 => y += player_speed / fps,
+                        _ => ()
+                    }
+                }
+
                 let mut vertex_data = Vec::new();
                 let mut path_count = 0;
                 for i in 0..path_positions.len() {
                     for j in 0..path_positions[i].len() {
-                        path_positions[i][j].0 -= path_speed;
+                        path_positions[i][j].0 -= path_speed / fps;
                         vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, path_width, path_height, 0.0, path_colors[i][j]));
                         path_count += 1;
                     }
@@ -97,7 +108,7 @@ fn main() {
                 int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
                 color = color_convert(int_color);
                 vertex_data.append(&mut build_rect(x, y, width, height, 0.0, color));
-                let last_vert = vertex_data.len() as u32 - 4;
+                // let last_vert = vertex_data.len() as u32 - 4;
                 copy_to_buf(&vertex_data, &vert_buf);
                 let command_buffer = command_queue.new_command_buffer();
 
@@ -106,9 +117,11 @@ fn main() {
                 let render_descriptor = new_render_pass_descriptor(&texture);
 
                 let encoder = init_render_with_bufs(&vec![], &render_descriptor, &render_pipeline, command_buffer);
-                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, last_vert}].as_ptr() as *const _);
+                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius}].as_ptr() as *const _);
                 // encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * vertex_data.len()) as u64, vertex_data.as_ptr() as *const _);
                 encoder.set_vertex_buffer(1, Some(&vert_buf), 0);
+                encoder.set_fragment_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius}].as_ptr() as *const _);
+                encoder.set_fragment_bytes(1, size_of::<Float2>() as u64, vec![Float2(x, y)].as_ptr() as *const _);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
                 for i in 0..path_count {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
@@ -129,6 +142,16 @@ fn main() {
                                     lerp_t += e.deltaX() / view_width;
                                     lerp_t = lerp_t.max(0.0).min(1.0);
                                     app.sendEvent(e);
+                                },
+                                NSEventType::KeyDown => {
+                                    if !keys_pressed.contains(&e.keyCode()) {
+                                        keys_pressed.push(e.keyCode());
+                                    }
+                                },
+                                NSEventType::KeyUp => {
+                                    if let Some(index) = keys_pressed.iter().position(|key| key == &e.keyCode()) {
+                                        keys_pressed.remove(index);
+                                    }
                                 },
                                 _ => app.sendEvent(e),
                             }

@@ -17,7 +17,7 @@ struct vertex_t {
 struct uniforms {
     float screen_x;
     float screen_y;
-    uint last_vert;
+    float radius;
 };
 
 vertex ColorInOut box_vertex (
@@ -30,23 +30,25 @@ vertex ColorInOut box_vertex (
     uniforms uni = unis[0];
     float screen_x = uni.screen_x;
     float screen_y = uni.screen_y;
-    uint last_vert = uni.last_vert;
 
     out.position = float4(verts[vid].pos.x / screen_x, verts[vid].pos.y / screen_y, 0.0, 1.0);
-    float4 color = verts[vid].col;
-    if (vid < last_vert) {
-        out.color = float4(color.r * 0.299 + 0.587 * color.g + color.b * 0.114);
-    } else {
-        out.color = color;
-    }
-    out.color.a = 1.0;
+    out.color = verts[vid].col;
 
     return out;
 }
 
 
 fragment float4 box_fragment (
+    const device uniforms *unis,
+    const device float2 *player_pos,
     ColorInOut in [[ stage_in ]]
 ) {
-    return in.color;
+    float screen_x = unis[0].screen_x;
+    float screen_y = unis[0].screen_y;
+    float radius = unis[0].radius;
+    float2 pos_norm = float2((player_pos[0].x + screen_x) / 2.0, (-player_pos[0].y + screen_y) / 2.0);
+    float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), 1.0);
+    float t = saturate(distance(pos_norm, in.position.xy) / radius);
+    float4 color_out = mix(in.color, grayscaled, t);
+    return color_out;
 }
