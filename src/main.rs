@@ -1,8 +1,8 @@
 use hsv::hsv_to_rgb;
 use maths::{apply_rotation_float2, float2_add, float2_subtract, Float2, Float4};
 use metal::MTLResourceOptions;
-use objc2::rc::autoreleasepool;
-use objc2_app_kit::{NSAnyEventMask, NSEventType};
+use objc2::{rc::autoreleasepool, runtime::NO};
+use objc2_app_kit::{NSAnyEventMask, NSEventType, NSEvent};
 use objc2_foundation::{NSComparisonResult, NSDate, NSDefaultRunLoopMode};
 use utils::{copy_to_buf, get_library, get_next_frame, init_render_with_bufs, make_buf, new_render_pass_descriptor, prepare_pipeline_state, simple_app};
 use rand::random;
@@ -86,7 +86,7 @@ fn main() {
     let goal_y = 600.0;
     let goal_width = 100.0;
     let goal_height = 100.0;
-    let goal_t = random::<f64>();
+    let mut goal_t = random::<f64>();
     let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
 
 
@@ -97,10 +97,10 @@ fn main() {
     let path_x = 1024.0;
     let path_width = 150.0;
     let path_height = (2.0 * view_height) / num_path_spawns as f32;
-    let path_speed = 10.0 * 60.0;
+    let path_speed = 450.0;
 
     let projectile_width = 100.0;
-    let projectile_height =  projectile_width / 5.0;
+    let projectile_height =  projectile_width / 10.0;
 
     for i in 0..num_path_spawns {
         path_positions[i].push(Float2(path_x + (random::<f32>() * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height));
@@ -116,14 +116,14 @@ fn main() {
 
     //jumprope params
     let mut accum = 0.0;
-    let jumprope_spawn_threshold = 100.0;
+    let jumprope_spawn_threshold = 200.0;
     let jumprope_limit = 4;
 
-    let jumprope_speed = 200.0;
+    let jumprope_speed = 150.0;
     let jumprope_x = 0.0;
     let jumprope_y = view_height;
     let jumprope_width = view_width * 2.5;
-    let jumprope_height = projectile_height;
+    let jumprope_height = projectile_height * 2.0;
 
     let mut jumprope_positions = Vec::new();
     let mut jumprope_ts = Vec::new();
@@ -140,6 +140,7 @@ fn main() {
 
     let mut radius = 300.0;
     let mut signal_lost = 0.0;
+    let mut carrying = false;
     loop {
         autoreleasepool(|_| {
             if app.windows().is_empty() {
@@ -176,9 +177,25 @@ fn main() {
                 }
 
                 //build jumprope and move by speed
+                let mut jumps_to_remove = Vec::new();
                 for i in 0..jumprope_positions.len() {
                     jumprope_positions[i] -= jumprope_speed / fps;
-                    vertex_data.append(&mut build_rect(jumprope_x, jumprope_positions[i], jumprope_width, jumprope_height, 0.0, color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
+                    let jump_rect = &mut build_rect(jumprope_x, jumprope_positions[i], jumprope_width, jumprope_height, 0.0, color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0)));
+                    if rect_intersect(&player_rect, jump_rect) {
+                        if player_rect[0].color != jump_rect[0].color {
+                            jumps_to_remove.insert(0, i);
+                            health -= 1;
+                            continue;
+                        } else {
+                            signal_lost += 0.01;
+                            radius += 1.0
+                        }
+                    }
+                    vertex_data.append(jump_rect);
+                }
+                for i in jumps_to_remove {
+                    jumprope_positions.remove(i);
+                    jumprope_ts.remove(i);
                 }
 
                 //remove old jumpropes
@@ -186,6 +203,7 @@ fn main() {
                     jumprope_positions.remove(0);
                     jumprope_ts.remove(0);
                 }
+
 
                 //copying new vertex data per frame, not good but whatever
                 let mut path_count = 0;
@@ -252,10 +270,18 @@ fn main() {
                     // println!("You lose!");
                     // unsafe { app.terminate(None) };
                 }
+                if carrying && y < -view_height {
+                    carrying = false;
+                    goal_t = random();
+                    println!("+1");
+                }
+                if carrying {
+                    goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 0.0, 1.0));
+                }
                 let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 // let goal_rect = goal_verts.iter().map(|val| val.position).collect::<Vec<Float4>>();
                 if rect_intersect(player, &goal_verts) && stepped_hue(lerp_t) == stepped_hue(goal_t) {
-                    println!("Goal reached!");
+                    carrying = true;
                 }
                 // if collision < 999 {
                 //     // path_positions.remove(collision);
@@ -303,7 +329,7 @@ fn main() {
                         Some(ref e) => {
                             match e.r#type() {
                                 NSEventType::MouseMoved => {
-                                    lerp_t += e.deltaX() / view_width as f64;
+                                    lerp_t = e.locationInWindow().x / view_width as f64;
                                     lerp_t = lerp_t.max(0.0).min(1.0);
                                     app.sendEvent(e);
                                 },
