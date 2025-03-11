@@ -1,5 +1,6 @@
 use hsv::hsv_to_rgb;
 use maths::{apply_rotation_float2, float2_add, float2_subtract, Float2, Float4};
+use metal::MTLResourceOptions;
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSAnyEventMask, NSEventType};
 use objc2_foundation::{NSComparisonResult, NSDate, NSDefaultRunLoopMode};
@@ -62,7 +63,7 @@ fn main() {
     let mut goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
 
 
-    let num_path_spawns = 15;
+    let num_path_spawns = 7;
     let mut path_positions : Vec<Vec<Float2>> = vec![Vec::new(); num_path_spawns];
     let mut path_colors : Vec<Vec<Float4>> = vec![Vec::new(); num_path_spawns];
     let path_x = 1024.0;
@@ -70,8 +71,8 @@ fn main() {
     let path_height = (2.0 * view_height) / num_path_spawns as f32;
     let path_speed = 10.0 * 60.0;
 
-    let projectile_width = 60.0;
-    let projectile_height = path_height / 5.0;
+    let projectile_width = 100.0;
+    let projectile_height =  projectile_width / 5.0;
 
     //make vec of paths for each spawn point
     //check last spawn for passing threshold
@@ -87,8 +88,13 @@ fn main() {
         }
     }
 
-    let vert_buf = make_buf(&vertex_data, &device);
-    let radius = 300.0;
+    let vert_buf = device.new_buffer_with_data(
+        vertex_data.as_ptr() as *const _,
+        size_of::<vertex_t>() as u64 * 4 * 1024,
+        MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
+    );
+
+    let mut radius = 300.0;
     let mut signal_lost = 0.0;
     loop {
         autoreleasepool(|_| {
@@ -105,7 +111,7 @@ fn main() {
                         0 => x -= player_speed / fps,
                         1 => y -= player_speed / fps,
                         2 => x += player_speed / fps,
-                        14 => signal_lost += 0.1 / fps,
+                        14 => {signal_lost += 0.1 / fps; radius += 10.0 / fps},
                         13 => y += player_speed / fps,
                         _ => ()
                     }
@@ -133,6 +139,7 @@ fn main() {
                 }
                 let last_vert = vertex_data.len() as u32 - 4;
                 copy_to_buf(&vertex_data, &vert_buf);
+                // let vert_buf = make_buf(&vertex_data, &device);
                 let command_buffer = command_queue.new_command_buffer();
 
                 let drawable = layer.next_drawable().unwrap();
