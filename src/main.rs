@@ -49,6 +49,10 @@ struct Uniforms {
     last_vert : u32
 }
 
+fn rect_intersect (rect1 : &[vertex_t], rect2 : &[vertex_t]) -> bool {
+    rect1[0].position.0 < rect2[1].position.0 && rect2[0].position.0 < rect1[1].position.0 && rect1[0].position.1 < rect2[2].position.1 && rect2[0].position.1 < rect1[2].position.1
+}
+
 fn main() {
     let view_width = 1024.0;
     let view_height = 768.0;
@@ -71,6 +75,7 @@ fn main() {
     let player_speed = 600.0;
     let width = 50.0;
     let height = width;
+    let mut health = 5;
 
     let mut lerp_t = 0.0;
     let mut int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
@@ -199,8 +204,49 @@ fn main() {
                     }
                 }
                 let last_vert = vertex_data.len() as u32 - 4;
+
+                // let all_rects = vertex_data.iter().map(|vert| vert.position).collect::<Vec<Float4>>();
+                // let (player, rest) = all_rects.split_at(4);
+                // let rects = rest.chunks(4);
+                // let goal_rect = rects.last();
+
+                let (player, rest) = vertex_data.split_at_mut(4);
+                let rects = rest.chunks(4);
+
+                // let mut chunk_number = 1;
+                // let mut collision = 999;
+                for rect in rects {
+                    if rect_intersect(player, rect) {
+                        if player[0].color != rect[0].color {
+                            for i in 0..4 {
+                                player[i].color = Float4(1.0, 0.0, 0.0, 1.0);
+                                health -= 1;
+                                // collision = chunk_number
+                            }
+                        } else {
+                            signal_lost += 0.01;
+                        }
+                    }
+                    // chunk_number += 1;
+                }
+                if health == 0 {
+                    println!("You lose!");
+                    unsafe { app.terminate(None) };
+                }
+                let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
+                // let goal_rect = goal_verts.iter().map(|val| val.position).collect::<Vec<Float4>>();
+                if rect_intersect(player, &goal_verts) && stepped_hue(lerp_t) == stepped_hue(goal_t) {
+                    println!("Goal reached!");
+                }
+                // if collision < 999 {
+                //     // path_positions.remove(collision);
+                //     // path_colors.remove(collision);
+                //     for _ in 0..4 {
+                //         vertex_data.remove(collision * 4);
+                //     }
+                // }
                 copy_to_buf(&vertex_data, &vert_buf);
-                // let vert_buf = make_buf(&vertex_data, &device);
+
                 let command_buffer = command_queue.new_command_buffer();
 
                 let drawable = layer.next_drawable().unwrap();
@@ -219,8 +265,6 @@ fn main() {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
                 }
 
-
-                let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 encoder.set_render_pipeline_state(&goal_pipeline);
                 encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * 4) as u64, goal_verts.as_ptr() as *const _);
 
@@ -268,7 +312,7 @@ fn main() {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct vertex_t {
     position : Float4,
     color : Float4,

@@ -1,7 +1,7 @@
 use std::{ffi::c_float, ops::Index};
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Float4(pub c_float,pub c_float, pub c_float, pub c_float);
 impl Float4 {
     pub fn new(v1 : Float2, v2 : Float2) -> Self {
