@@ -1,10 +1,10 @@
 use hsv::hsv_to_rgb;
 use maths::{apply_rotation_float2, float2_add, float2_subtract, Float2, Float4};
 use metal::MTLResourceOptions;
-use objc2::{rc::autoreleasepool, runtime::NO};
-use objc2_app_kit::{NSAnyEventMask, NSEventType, NSEvent};
+use objc2::rc::autoreleasepool;
+use objc2_app_kit::{NSAnyEventMask, NSEventType};
 use objc2_foundation::{NSComparisonResult, NSDate, NSDefaultRunLoopMode};
-use utils::{copy_to_buf, get_library, get_next_frame, init_render_with_bufs, make_buf, new_render_pass_descriptor, prepare_pipeline_state, simple_app};
+use utils::{copy_to_buf, get_library, get_next_frame, init_render_with_bufs, new_render_pass_descriptor, prepare_pipeline_state, simple_app};
 use rand::random;
 
 mod maths;
@@ -33,7 +33,7 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
 //  unclear what that means for the jumpropes, maybe color band is pretty lenient
 
 
-const COLOR_STEPS : u32 = 12;
+const COLOR_STEPS : u32 = 7;
 fn stepped_hue(t : f64) -> f64 {
     let hue_step = 360 / COLOR_STEPS;
     let hue = t * 360.0;
@@ -75,7 +75,6 @@ fn main() {
     let player_speed = 600.0;
     let width = 50.0;
     let height = width;
-    let mut health = 5;
 
     let mut lerp_t = 0.0;
     let mut int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
@@ -142,6 +141,11 @@ fn main() {
     let mut signal_lost = 0.0;
     let mut carrying = false;
     loop {
+        if signal_lost >= 1.25 {
+            // println!("You lose!");
+            // unsafe { app.terminate(None) };
+            break;
+        }
         autoreleasepool(|_| {
             if app.windows().is_empty() {
                 unsafe {app.terminate(None);}
@@ -184,10 +188,10 @@ fn main() {
                     if rect_intersect(&player_rect, jump_rect) {
                         if player_rect[0].color != jump_rect[0].color {
                             jumps_to_remove.insert(0, i);
-                            health -= 1;
+                            signal_lost += 0.05;
                             continue;
                         } else {
-                            signal_lost += 0.01;
+                            signal_lost += 0.005;
                             radius += 1.0
                         }
                     }
@@ -216,12 +220,14 @@ fn main() {
                             if player_rect[0].color != rect[0].color {
                                 for k in 0..4 {
                                     vertex_data[k].color = Float4(1.0, 0.0, 0.0, 1.0);
-                                    health -= 1;
+                                    signal_lost += 0.05;
                                 }
+                                paths_to_remove.insert(0, (i,j));
                             } else {
-                                signal_lost += 0.25;
+                                signal_lost += 0.005;
+                                vertex_data.append(&mut rect);
+                                path_count += 1;
                             }
-                            paths_to_remove.insert(0, (i,j));
                         } else {
                             vertex_data.append(&mut rect);
                             path_count += 1;
@@ -242,37 +248,11 @@ fn main() {
                 }
                 let last_vert = vertex_data.len() as u32 - 4;
 
-                // let all_rects = vertex_data.iter().map(|vert| vert.position).collect::<Vec<Float4>>();
-                // let (player, rest) = all_rects.split_at(4);
-                // let rects = rest.chunks(4);
-                // let goal_rect = rects.last();
-
-                let (player, rest) = vertex_data.split_at_mut(4);
-                let rects = rest.chunks(4);
-
-                // let mut chunk_number = 1;
-                // let mut collision = 999;
-                // for rect in rects {
-                //     if rect_intersect(player, rect) {
-                        // if player[0].color != rect[0].color {
-                        //     for i in 0..4 {
-                        //         player[i].color = Float4(1.0, 0.0, 0.0, 1.0);
-                        //         health -= 1;
-                        //         // collision = chunk_number
-                        //     }
-                        // } else {
-                        //     signal_lost += 0.01;
-                        // }
-                //     }
-                //     // chunk_number += 1;
-                // }
-                if health <= 0 {
-                    // println!("You lose!");
-                    // unsafe { app.terminate(None) };
-                }
                 if carrying && y < -view_height {
                     carrying = false;
                     goal_t = random();
+                    goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
+                    signal_lost -= 0.25;
                     println!("+1");
                 }
                 if carrying {
@@ -280,7 +260,7 @@ fn main() {
                 }
                 let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 // let goal_rect = goal_verts.iter().map(|val| val.position).collect::<Vec<Float4>>();
-                if rect_intersect(player, &goal_verts) && stepped_hue(lerp_t) == stepped_hue(goal_t) {
+                if rect_intersect(&player_rect, &goal_verts) && stepped_hue(lerp_t) == stepped_hue(goal_t) {
                     carrying = true;
                 }
                 // if collision < 999 {
