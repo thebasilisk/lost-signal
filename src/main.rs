@@ -25,6 +25,7 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
 //      single colored, fx unclear maybe ghosting trail
 //  clusterbomb thingy maybe
 //      lob out then explode, circle on ground is important
+//          to do parabolic path, calculate offset from axis aligned parabola equation then apply rotation
 //  chasers
 //      following player with simple predictable pattern
 //      maybe should choose direction + lunge
@@ -83,10 +84,37 @@ impl Particle {
     }
 }
 
-// struct Ghost {
-//     position : Float2,
-//     lifetime : f32,
-// }
+const CLUSTER_END_T : f32 = 3.0;
+const CLUSTER_START_SQAURE_SPEED : f32 = 1000000.0;
+
+#[derive(Debug)]
+struct Clusterbomb {
+    start_pos : Float2,
+    end_pos : Float2,
+    x_vel : f32,
+    y_vel : f32,
+    y_accel : f32,
+    t : f32,
+}
+impl Clusterbomb {
+    fn new(start_pos : Float2, x_vel : f32, y_vel : f32, y_accel : f32) -> Self {
+        let end_pos = float2_add(start_pos, Float2(x_vel * CLUSTER_END_T, (y_vel * CLUSTER_END_T) - 0.5 * (y_accel * CLUSTER_END_T.powf(2.0))));
+        Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, t: 0.0 }
+    }
+    fn update(&mut self, delta_t : f32) -> Float2 {
+        self.t += delta_t;
+        float2_add(self.start_pos, Float2(self.x_vel * self.t, (self.y_vel * self.t) - 0.5 * (self.y_accel * self.t.powf(2.0))))
+    }
+    fn from_positions(start_pos : Float2, end_pos : Float2) -> Self {
+        let pos_diff = float2_subtract(end_pos, start_pos);
+        let x_vel = pos_diff.0 / CLUSTER_END_T;
+        //sqrt(start_speed^2 - x^2) = + y^2
+        let y_vel = (CLUSTER_START_SQAURE_SPEED - x_vel.powf(2.0)).sqrt();
+        let y_accel = ((pos_diff.1 - (y_vel * CLUSTER_END_T)) * -2.0) / CLUSTER_END_T.powf(2.0);
+        Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, t: 0.0 }
+    }
+}
+
 fn main() {
     let view_width = 1024.0;
     let view_height = 768.0;
@@ -102,6 +130,8 @@ fn main() {
     let render_pipeline = prepare_pipeline_state(&device, "box_vertex", "box_fragment", &shaderlib);
     let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "goal_fragment", &shaderlib);
     let command_queue = device.new_command_queue();
+
+    let mut score = 0;
 
     //player params
     let mut x = 0.0;
@@ -133,7 +163,7 @@ fn main() {
     let path_width = 150.0;
     let mut path_height = (2.0 * view_height) / current_spawns as f32;
     let mut laser_speed = 450.0;
-    let mut laser_trail_spawn_frames = 10;
+    let mut laser_trail_spawn_frames = 4;
 
     let projectile_width = 100.0;
     let projectile_height =  projectile_width / 10.0;
@@ -169,6 +199,14 @@ fn main() {
     jumprope_positions.push(jumprope_y);
     jumprope_ts.push(random::<f64>());
 
+    //clusterbomb params
+    let cluster_spawn_start_score = 5;
+    let cluster_frag_count = 8;
+    let cluster_width = 25.0;
+
+    let mut clusters = Vec::new();
+
+
     let laser_buf = device.new_buffer_with_data(
         laser_verts.as_ptr() as *const _,
         (size_of::<vertex_t>() * laser_verts.len() * 128) as u64,
@@ -176,10 +214,15 @@ fn main() {
     );
     let particle_buf = device.new_buffer_with_data(
         start_vert.as_ptr() as *const _,
-        (size_of::<vertex_t>() * 4 * 256) as u64,
+        (size_of::<vertex_t>() * 4 * 1024) as u64,
         MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
     );
     let jump_buf = device.new_buffer_with_data(
+        start_vert.as_ptr() as *const _,
+        (size_of::<vertex_t>() * 4 * 16) as u64,
+        MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
+    );
+    let cluster_buf = device.new_buffer_with_data(
         start_vert.as_ptr() as *const _,
         (size_of::<vertex_t>() * 4 * 16) as u64,
         MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
@@ -223,6 +266,7 @@ fn main() {
                 }
                 let mut laser_verts : Vec<vertex_t> = Vec::new();
                 let mut jump_verts : Vec<vertex_t> = Vec::new();
+                let mut cluster_verts : Vec<vertex_t> = Vec::new();
                 let mut particle_verts : Vec<vertex_t> = Vec::new();
                 let mut box_verts : Vec<vertex_t> = Vec::new();
 
@@ -316,6 +360,18 @@ fn main() {
                 }
                 // let last_vert = vertex_data.len() as u32 - 4;
 
+                if clusters.is_empty() {
+                    // clusters.push(Clusterbomb::new(Float2(x, y), (random::<f32>() * 2.0 - 1.0) * view_width / 2.0, random::<f32>() * view_height / 2.0, 100.0));
+                    clusters.push(Clusterbomb::from_positions(Float2(x, y), Float2((random::<f32>() * 2.0 - 1.0) * view_width, (random::<f32>() * 2.0 - 1.0) * view_height)));
+                    println!("{:?}", clusters[0]);
+                }
+
+                for bomb in clusters.iter_mut() {
+                    let current_pos = bomb.update(1.0 / fps);
+                    cluster_verts.append(&mut build_rect(current_pos.0, current_pos.1, cluster_width, cluster_width, 0.0, Float4(1.0, 0.0, 0.0, 1.0)));
+                }
+                clusters.retain(|bomb| bomb.t < CLUSTER_END_T);
+
                 particles.retain(|particle| particle.lifetime > 0.0);
 
                 for unit in particles.iter_mut() {
@@ -336,9 +392,12 @@ fn main() {
                     signal_lost -= 0.25;
                     laser_speed *= 1.05;
                     jumprope_speed *= 1.05;
-                    current_spawns = (current_spawns + 1).min(num_path_spawns);
-                    laser_trail_spawn_frames -= 2;
+                    if score % 2 == 0 {
+                        current_spawns = (current_spawns + 1).min(num_path_spawns);
+                        laser_trail_spawn_frames -= 5;
+                    }
                     path_height = (2.0 * view_height) / current_spawns as f32;
+                    score += 1;
                     println!("+1");
                 }
                 if carrying {
@@ -351,6 +410,7 @@ fn main() {
                 }
                 copy_to_buf(&laser_verts, &laser_buf);
                 copy_to_buf(&jump_verts, &jump_buf);
+                copy_to_buf(&cluster_verts, &cluster_buf);
                 copy_to_buf(&particle_verts, &particle_buf);
                 copy_to_buf(&box_verts, &box_buf);
 
@@ -381,6 +441,10 @@ fn main() {
                 }
                 encoder.set_vertex_buffer(1, Some(&box_buf), 0);
                 for i in 0..box_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
+                }
+                encoder.set_vertex_buffer(1, Some(&cluster_buf), 0);
+                for i in 0..cluster_verts.len() / 4 {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
 
