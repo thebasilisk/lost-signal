@@ -40,15 +40,32 @@ vertex ColorInOut box_vertex (
 }
 
 
+//float r1 = 0.5;
+//float r2 = 0.3;
+//float h = 1.0;
+//float2 coords = float2(abs(in.uv.y - 0.5), in.uv.x - 0.5) * 4.0;
+//float b = (r1 - r2) / h;
+//float a = sqrt(1.0-b*b);
+//float k = dot(coords, float2(-b,a));
+
+//float d = 0.0;
+//if( k < 0.0 ) {
+//    d = length(coords) - r1;
+//} else if( k > a*h ) {
+//    d = length(coords-float2(0.0,h)) - r2;
+//} else {
+//    d = dot(coords, float2(a,b)) - r1;
+//}
+
 fragment float4 box_fragment (
     const device uniforms *unis,
     const device float2 *player_pos,
     const device float *signal_lost,
     ColorInOut in [[ stage_in ]]
 ) {
-    float2 coords = float2(in.uv.x * 8.0, in.uv.y);
-    float2 clamped_uv = float2(clamp(coords.x, 1.0, 7.0), 0.5);
-    float sdf_mask = -sign(distance(clamped_uv, coords) * 2.0 - 1.0);
+    //float2 coords = float2(in.uv.x * 8.0, in.uv.y);
+    //float2 clamped_uv = float2(clamp(coords.x, 1.0, 7.0), 0.5);
+    //float sdf_mask = -sign(distance(clamped_uv, coords) * 2.0 - 0.9);
 
     float screen_x = unis[0].screen_x;
     float screen_y = unis[0].screen_y;
@@ -57,7 +74,8 @@ fragment float4 box_fragment (
     float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), in.color.a);
     float t = saturate((distance(pos_norm, in.position.xy) / radius) + signal_lost[0]);
     float4 color_out = mix(in.color, grayscaled, t);
-    return color_out * sdf_mask;
+    //if (d > 0.0) discard_fragment();
+    return color_out;
 }
 
 fragment float4 goal_fragment (

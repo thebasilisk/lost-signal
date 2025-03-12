@@ -48,7 +48,6 @@ struct Uniforms {
     screen_x : f32,
     screen_y : f32,
     radius : f32,
-    last_vert : u32
 }
 
 fn rect_intersect (rect1 : &[vertex_t], rect2 : &[vertex_t]) -> bool {
@@ -84,6 +83,10 @@ impl Particle {
     }
 }
 
+// struct Ghost {
+//     position : Float2,
+//     lifetime : f32,
+// }
 fn main() {
     let view_width = 1024.0;
     let view_height = 768.0;
@@ -105,7 +108,7 @@ fn main() {
     let mut y = 0.0;
     let player_speed = 600.0;
     let width = 50.0;
-    let height = width;
+    let height = 50.0;
 
     let mut lerp_t = 0.0;
     let mut int_color = hsv_to_rgb(lerp_t * 360.0, 1.0, 1.0);
@@ -121,26 +124,30 @@ fn main() {
 
 
     //spawning lasers
-    let num_path_spawns = 5;
-    let mut path_positions : Vec<Vec<Float2>> = vec![Vec::new(); num_path_spawns];
-    let mut path_colors : Vec<Vec<Float4>> = vec![Vec::new(); num_path_spawns];
+    let num_path_spawns = 10;
+    let mut current_spawns = 2;
+    let mut laser_positions : Vec<Vec<Float2>> = vec![Vec::new(); num_path_spawns];
+    let mut laser_colors : Vec<Vec<Float4>> = vec![Vec::new(); num_path_spawns];
+    let mut laser_ghosts : Vec<Particle> = Vec::new();
     let path_x = 1024.0;
     let path_width = 150.0;
-    let path_height = (2.0 * view_height) / num_path_spawns as f32;
-    let path_speed = 350.0;
+    let mut path_height = (2.0 * view_height) / current_spawns as f32;
+    let mut laser_speed = 450.0;
+    let mut laser_trail_spawn_frames = 10;
 
     let projectile_width = 100.0;
     let projectile_height =  projectile_width / 10.0;
 
     for i in 0..num_path_spawns {
-        path_positions[i].push(Float2(path_x + (random::<f32>() * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height));
-        path_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
+        laser_positions[i].push(Float2(path_x + (random::<f32>() * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height));
+        laser_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
     }
     // redundant work, done later
-    let mut vertex_data = Vec::new();
-    for i in 0..path_positions.len() {
-        for j in 0..path_positions[i].len() {
-            vertex_data.append(&mut build_rect(path_positions[i][j].0, path_positions[i][j].1, path_width, path_height, 0.0, path_colors[i][j]));
+    let mut laser_verts : Vec<vertex_t> = Vec::new();
+    let start_vert : Vec<vertex_t> = vec![vertex_t{ position: Float4(0.0, 0.0, 0.0, 0.0), color: Float4(0.0, 0.0, 0.0, 0.0)}];
+    for i in 0..laser_positions.len() {
+        for j in 0..laser_positions[i].len() {
+            laser_verts.append(&mut build_rect(laser_positions[i][j].0, laser_positions[i][j].1, path_width, path_height, 0.0, laser_colors[i][j]));
         }
     }
 
@@ -149,7 +156,7 @@ fn main() {
     let jumprope_spawn_threshold = 200.0;
     let jumprope_limit = 4;
 
-    let jumprope_speed = 150.0;
+    let mut jumprope_speed = 150.0;
     let jumprope_x = 0.0;
     let jumprope_y = view_height;
     let jumprope_width = view_width * 2.5;
@@ -162,9 +169,24 @@ fn main() {
     jumprope_positions.push(jumprope_y);
     jumprope_ts.push(random::<f64>());
 
-    let vert_buf = device.new_buffer_with_data(
-        vertex_data.as_ptr() as *const _,
-        size_of::<vertex_t>() as u64 * 4 * 2048,
+    let laser_buf = device.new_buffer_with_data(
+        laser_verts.as_ptr() as *const _,
+        (size_of::<vertex_t>() * laser_verts.len() * 128) as u64,
+        MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
+    );
+    let particle_buf = device.new_buffer_with_data(
+        start_vert.as_ptr() as *const _,
+        (size_of::<vertex_t>() * 4 * 256) as u64,
+        MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
+    );
+    let jump_buf = device.new_buffer_with_data(
+        start_vert.as_ptr() as *const _,
+        (size_of::<vertex_t>() * 4 * 16) as u64,
+        MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
+    );
+    let box_buf = device.new_buffer_with_data(
+        start_vert.as_ptr() as *const _,
+        (size_of::<vertex_t>() * 4 * 128) as u64,
         MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
     );
 
@@ -175,7 +197,7 @@ fn main() {
     let mut signal_lost = 0.0;
     let mut carrying = false;
     loop {
-        if signal_lost >= 1.25 {
+        if signal_lost >= 1.15 {
             // println!("You lose!");
             // unsafe { app.terminate(None) };
             break;
@@ -199,12 +221,15 @@ fn main() {
                         _ => ()
                     }
                 }
+                let mut laser_verts : Vec<vertex_t> = Vec::new();
+                let mut jump_verts : Vec<vertex_t> = Vec::new();
+                let mut particle_verts : Vec<vertex_t> = Vec::new();
+                let mut box_verts : Vec<vertex_t> = Vec::new();
 
-                let mut vertex_data = Vec::new();
                 int_color = hsv_to_rgb(stepped_hue(lerp_t), 1.0, 1.0);
                 color = color_convert(int_color);
                 let player_rect = build_rect(x, y, width, height, 0.0, color);
-                vertex_data.append(&mut player_rect.clone());
+                box_verts.append(&mut player_rect.clone());
 
                 //check jumprope spawn
                 accum += random::<f64>();
@@ -221,18 +246,20 @@ fn main() {
                     jumprope_positions[i] -= jumprope_speed / fps;
                     let jump_rect = &mut build_rect(jumprope_x, jumprope_positions[i], jumprope_width, jumprope_height, 0.0, color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0)));
                     particles.push(Particle::spawn(Float2(jumprope_x + view_width, jumprope_positions[i]), 10.0, 3.0, Float2(-5.0, 0.0), color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
+                    particles.push(Particle::spawn(Float2(jumprope_x + view_width, jumprope_positions[i]), 10.0, 3.0, Float2(-5.0, 0.0), color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
+                    particles.push(Particle::spawn(Float2(jumprope_x - view_width, jumprope_positions[i]), 10.0, 3.0, Float2(5.0, 0.0), color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
                     particles.push(Particle::spawn(Float2(jumprope_x - view_width, jumprope_positions[i]), 10.0, 3.0, Float2(5.0, 0.0), color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
                     if rect_intersect(&player_rect, jump_rect) {
                         if player_rect[0].color != jump_rect[0].color {
                             jumps_to_remove.insert(0, i);
-                            signal_lost += 0.05;
+                            signal_lost += 0.15;
                             continue;
                         } else {
                             signal_lost += 0.005;
                             radius += 1.0
                         }
                     }
-                    vertex_data.append(jump_rect);
+                    jump_verts.append(jump_rect);
                 }
                 for i in jumps_to_remove {
                     jumprope_positions.remove(i);
@@ -245,58 +272,73 @@ fn main() {
                     jumprope_ts.remove(0);
                 }
 
+
+                //draw lasers
+                //copying new vertex data per frame, not good but whatever
+                let mut path_count = 0;
+                let mut paths_to_remove = Vec::new();
+                for i in 0..current_spawns {
+                    for j in 0..laser_positions[i].len() {
+                        laser_positions[i][j].0 -= laser_speed / fps;
+                        let mut rect = build_rect(laser_positions[i][j].0, laser_positions[i][j].1, projectile_width, projectile_height, 0.0, laser_colors[i][j]);
+                        if rect_intersect(&player_rect, &rect) {
+                            if player_rect[0].color != rect[0].color {
+                                for k in 0..4 {
+                                    laser_verts[k].color = Float4(1.0, 0.0, 0.0, 1.0);
+                                }
+                                signal_lost += 0.10;
+                                paths_to_remove.insert(0, (i,j));
+                            } else {
+                                signal_lost += 0.005;
+                                laser_verts.append(&mut rect);
+                                path_count += 1;
+                            }
+                        } else {
+                            laser_verts.append(&mut rect);
+                            path_count += 1;
+                        }
+                        if frames % laser_trail_spawn_frames == 0 {
+                            laser_ghosts.insert(0, Particle::spawn(laser_positions[i][j], 0.0, 0.0, Float2(0.0, 0.0), laser_colors[i][j]))
+                        }
+                    }
+                    if laser_positions[i].last().unwrap().0 < (path_width * -0.45) + path_x {
+                        laser_positions[i].push(Float2(path_x + (random::<f32>() * 1.5 * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / current_spawns as f32) * i as f32 + path_height / 2.0) - view_height + (random::<f32>() - 0.5) * path_height));
+                        laser_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
+                    }
+                    if laser_positions[i].first().unwrap().0 < (path_width * -0.55) - path_x {
+                        laser_positions[i].remove(0);
+                        laser_colors[i].remove(0);
+                    }
+                }
+                for (i,j) in paths_to_remove {
+                    laser_positions[i].remove(j);
+                    laser_colors[i].remove(j);
+                }
+                // let last_vert = vertex_data.len() as u32 - 4;
+
                 particles.retain(|particle| particle.lifetime > 0.0);
 
                 for unit in particles.iter_mut() {
                     unit.update();
-                    vertex_data.append(&mut build_rect(unit.position.0, unit.position.1, particle_width, particle_width, 0.0, Float4(unit.color.0, unit.color.1, unit.color.2, unit.lifetime)));
+                    particle_verts.append(&mut build_rect(unit.position.0, unit.position.1, particle_width, particle_width, 0.0, Float4(unit.color.0, unit.color.1, unit.color.2, unit.lifetime)));
                 }
 
-
-                //copying new vertex data per frame, not good but whatever
-                let mut path_count = 0;
-                let mut paths_to_remove = Vec::new();
-                for i in 0..path_positions.len() {
-                    for j in 0..path_positions[i].len() {
-                        path_positions[i][j].0 -= path_speed / fps;
-                        let mut rect = build_rect(path_positions[i][j].0, path_positions[i][j].1, projectile_width, projectile_height, 0.0, path_colors[i][j]);
-                        if rect_intersect(&player_rect, &rect) {
-                            if player_rect[0].color != rect[0].color {
-                                for k in 0..4 {
-                                    vertex_data[k].color = Float4(1.0, 0.0, 0.0, 1.0);
-                                    signal_lost += 0.05;
-                                }
-                                paths_to_remove.insert(0, (i,j));
-                            } else {
-                                signal_lost += 0.005;
-                                vertex_data.append(&mut rect);
-                                path_count += 1;
-                            }
-                        } else {
-                            vertex_data.append(&mut rect);
-                            path_count += 1;
-                        }
-                    }
-                    if path_positions[i].last().unwrap().0 < (path_width * -0.45) + path_x {
-                        path_positions[i].push(Float2(path_x + (random::<f32>() * 1.5 * path_width / 10.0).floor() * 10.0, ((2.0 * view_height / num_path_spawns as f32) * i as f32 + path_height / 2.0) - view_height + (random::<f32>() - 0.5) * path_height));
-                        path_colors[i].push(color_convert(hsv_to_rgb(stepped_hue(random::<f64>()), 1.0, 1.0)));
-                    }
-                    if path_positions[i].first().unwrap().0 < (path_width * -0.55) - path_x {
-                        path_positions[i].remove(0);
-                        path_colors[i].remove(0);
-                    }
+                for ghost in laser_ghosts.iter_mut() {
+                    particle_verts.append(&mut build_rect(ghost.position.0, ghost.position.1, projectile_width, projectile_height, 0.0, Float4(ghost.color.0, ghost.color.1, ghost.color.2, ghost.lifetime)));
+                    ghost.lifetime -= 3.0 / fps;
                 }
-                for (i,j) in paths_to_remove {
-                    path_positions[i].remove(j);
-                    path_colors[i].remove(j);
-                }
-                let last_vert = vertex_data.len() as u32 - 4;
+                laser_ghosts.retain(|ghost| ghost.lifetime > 0.0);
 
                 if carrying && y < -view_height {
                     carrying = false;
                     goal_t = random();
                     goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
-                    signal_lost -= 0.5;
+                    signal_lost -= 0.25;
+                    laser_speed *= 1.05;
+                    jumprope_speed *= 1.05;
+                    current_spawns = (current_spawns + 1).min(num_path_spawns);
+                    laser_trail_spawn_frames -= 2;
+                    path_height = (2.0 * view_height) / current_spawns as f32;
                     println!("+1");
                 }
                 if carrying {
@@ -307,7 +349,10 @@ fn main() {
                 if rect_intersect(&player_rect, &goal_verts) && stepped_hue(lerp_t) == stepped_hue(goal_t) {
                     carrying = true;
                 }
-                copy_to_buf(&vertex_data, &vert_buf);
+                copy_to_buf(&laser_verts, &laser_buf);
+                copy_to_buf(&jump_verts, &jump_buf);
+                copy_to_buf(&particle_verts, &particle_buf);
+                copy_to_buf(&box_verts, &box_buf);
 
                 let command_buffer = command_queue.new_command_buffer();
 
@@ -316,15 +361,27 @@ fn main() {
                 let render_descriptor = new_render_pass_descriptor(&texture);
 
                 let encoder = init_render_with_bufs(&vec![], &render_descriptor, &render_pipeline, command_buffer);
-                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius, last_vert}].as_ptr() as *const _);
+                encoder.set_vertex_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius}].as_ptr() as *const _);
                 // encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * vertex_data.len()) as u64, vertex_data.as_ptr() as *const _);
-                encoder.set_vertex_buffer(1, Some(&vert_buf), 0);
-                encoder.set_fragment_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius, last_vert}].as_ptr() as *const _);
+                encoder.set_fragment_bytes(0, (size_of::<Uniforms>()) as u64, vec![Uniforms{screen_x : view_width as f32, screen_y : view_height as f32, radius}].as_ptr() as *const _);
                 encoder.set_fragment_bytes(1, size_of::<Float2>() as u64, vec![Float2(x, y)].as_ptr() as *const _);
                 encoder.set_fragment_bytes(2, (size_of::<f32>()) as u64, vec![signal_lost].as_ptr() as *const _);
-                encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
-                for i in 0..path_count + jumprope_positions.len() + particles.len() {
-                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
+                // encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+                encoder.set_vertex_buffer(1, Some(&laser_buf), 0);
+                for i in 0..laser_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
+                }
+                encoder.set_vertex_buffer(1, Some(&jump_buf), 0);
+                for i in 0..jump_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
+                }
+                encoder.set_vertex_buffer(1, Some(&particle_buf), 0);
+                for i in 0..particle_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
+                }
+                encoder.set_vertex_buffer(1, Some(&box_buf), 0);
+                for i in 0..box_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
 
                 encoder.set_render_pipeline_state(&goal_pipeline);

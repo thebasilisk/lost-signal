@@ -204,6 +204,8 @@ pub fn init_render_with_bufs <'a> (bufs : &[&BufferRef], descriptor : &RenderPas
     let offsets = [0; 10];
     let encoder = command_buffer.new_render_command_encoder(descriptor);
     encoder.set_render_pipeline_state(pipeline);
-    encoder.set_vertex_buffers(0, &data, &offsets[0..bufs.len()]);
+    if !data.is_empty() {
+        encoder.set_vertex_buffers(0, &data, &offsets[0..bufs.len()]);
+    }
     encoder
 }
