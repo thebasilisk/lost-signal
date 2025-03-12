@@ -82,6 +82,20 @@ impl Particle {
         self.velocity = scale2(self.velocity, self.lifetime);
         self.position = float2_add(self.velocity, self.position);
     }
+    fn update_custom(&mut self, delta_t: f32, forced_vel : Option<Float2>, friction: Option<f32>, accel: Option<Float2>) {
+        self.lifetime -= delta_t;
+        if let Some(val) = accel {
+            self.velocity = float2_add(self.velocity, val);
+        }
+        if let Some(val) = friction {
+            self.velocity = scale2(self.velocity, val);
+        }
+        if let Some(val) = forced_vel {
+            self.position = float2_add(self.position, val);
+        } else {
+            self.position = float2_add(self.position, self.velocity);
+        }
+    }
 }
 
 const CLUSTER_END_T : f32 = 3.0;
@@ -94,24 +108,25 @@ struct Clusterbomb {
     x_vel : f32,
     y_vel : f32,
     y_accel : f32,
+    color : Float4,
     t : f32,
 }
 impl Clusterbomb {
-    fn new(start_pos : Float2, x_vel : f32, y_vel : f32, y_accel : f32) -> Self {
+    fn new(start_pos : Float2, x_vel : f32, y_vel : f32, y_accel : f32, color: Float4) -> Self {
         let end_pos = float2_add(start_pos, Float2(x_vel * CLUSTER_END_T, (y_vel * CLUSTER_END_T) - 0.5 * (y_accel * CLUSTER_END_T.powf(2.0))));
-        Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, t: 0.0 }
+        Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, color, t: 0.0 }
     }
     fn update(&mut self, delta_t : f32) -> Float2 {
         self.t += delta_t;
         float2_add(self.start_pos, Float2(self.x_vel * self.t, (self.y_vel * self.t) - 0.5 * (self.y_accel * self.t.powf(2.0))))
     }
-    fn from_positions(start_pos : Float2, end_pos : Float2) -> Self {
+    fn from_positions(start_pos : Float2, end_pos : Float2, color: Float4) -> Self {
         let pos_diff = float2_subtract(end_pos, start_pos);
         let x_vel = pos_diff.0 / CLUSTER_END_T;
         //sqrt(start_speed^2 - x^2) = + y^2
         let y_vel = (CLUSTER_START_SQAURE_SPEED - x_vel.powf(2.0)).sqrt();
         let y_accel = ((pos_diff.1 - (y_vel * CLUSTER_END_T)) * -2.0) / CLUSTER_END_T.powf(2.0);
-        Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, t: 0.0 }
+        Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, color, t: 0.0 }
     }
 }
 
@@ -202,10 +217,11 @@ fn main() {
     //clusterbomb params
     let cluster_spawn_start_score = 5;
     let cluster_frag_count = 8;
-    let cluster_width = 25.0;
+    let cluster_width = 35.0;
+    let cluster_frag_speed = 150.0;
 
     let mut clusters = Vec::new();
-
+    let mut cluster_frag_particles = Vec::new();
 
     let laser_buf = device.new_buffer_with_data(
         laser_verts.as_ptr() as *const _,
@@ -223,6 +239,11 @@ fn main() {
         MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
     );
     let cluster_buf = device.new_buffer_with_data(
+        start_vert.as_ptr() as *const _,
+        (size_of::<vertex_t>() * 4 * 16) as u64,
+        MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
+    );
+    let cluster_frag_buf = device.new_buffer_with_data(
         start_vert.as_ptr() as *const _,
         (size_of::<vertex_t>() * 4 * 16) as u64,
         MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
@@ -267,6 +288,7 @@ fn main() {
                 let mut laser_verts : Vec<vertex_t> = Vec::new();
                 let mut jump_verts : Vec<vertex_t> = Vec::new();
                 let mut cluster_verts : Vec<vertex_t> = Vec::new();
+                let mut cluster_frag_verts : Vec<vertex_t> = Vec::new();
                 let mut particle_verts : Vec<vertex_t> = Vec::new();
                 let mut box_verts : Vec<vertex_t> = Vec::new();
 
@@ -328,7 +350,7 @@ fn main() {
                         if rect_intersect(&player_rect, &rect) {
                             if player_rect[0].color != rect[0].color {
                                 for k in 0..4 {
-                                    laser_verts[k].color = Float4(1.0, 0.0, 0.0, 1.0);
+                                    box_verts[k].color = Float4(1.0, 0.0, 0.0, 1.0);
                                 }
                                 signal_lost += 0.10;
                                 paths_to_remove.insert(0, (i,j));
@@ -362,13 +384,19 @@ fn main() {
 
                 if clusters.is_empty() {
                     // clusters.push(Clusterbomb::new(Float2(x, y), (random::<f32>() * 2.0 - 1.0) * view_width / 2.0, random::<f32>() * view_height / 2.0, 100.0));
-                    clusters.push(Clusterbomb::from_positions(Float2(x, y), Float2((random::<f32>() * 2.0 - 1.0) * view_width, (random::<f32>() * 2.0 - 1.0) * view_height)));
-                    println!("{:?}", clusters[0]);
+                    clusters.push(Clusterbomb::from_positions(Float2((random::<f32>() * 2.0 - 1.0) * view_width, (random::<f32>() * 2.0 - 1.0) * view_height), Float2(x, y), color_convert(hsv_to_rgb(stepped_hue(random()), 1.0, 1.0))));
                 }
 
                 for bomb in clusters.iter_mut() {
                     let current_pos = bomb.update(1.0 / fps);
-                    cluster_verts.append(&mut build_rect(current_pos.0, current_pos.1, cluster_width, cluster_width, 0.0, Float4(1.0, 0.0, 0.0, 1.0)));
+                    cluster_verts.append(&mut build_rect(current_pos.0, current_pos.1, cluster_width, cluster_width, 0.0, bomb.color));
+                    if bomb.t >= CLUSTER_END_T {
+                        let theta_step = 2.0 * PI / cluster_frag_count as f32;
+                        for i in 0..cluster_frag_count {
+                            let theta = i as f32 * theta_step;
+                            cluster_frag_particles.push(Particle::spawn(bomb.end_pos, 0.0, 0.0, Float2(theta.cos() * cluster_frag_speed, theta.sin() * cluster_frag_speed), bomb.color));
+                        }
+                    }
                 }
                 clusters.retain(|bomb| bomb.t < CLUSTER_END_T);
 
@@ -384,6 +412,32 @@ fn main() {
                     ghost.lifetime -= 3.0 / fps;
                 }
                 laser_ghosts.retain(|ghost| ghost.lifetime > 0.0);
+
+                let mut frags_to_remove = Vec::new();
+                for i in 0..cluster_frag_particles.len() {
+                    let frag = &mut cluster_frag_particles[i];
+                    let rect = &mut build_rect(frag.position.0, frag.position.1, cluster_width, cluster_width, 0.0, frag.color);
+                    if rect_intersect(&player_rect, rect) {
+                        if player_rect[0].color != rect[0].color {
+                            for k in 0..4 {
+                                box_verts[k].color = Float4(1.0, 0.0, 0.0, 1.0);
+                            }
+                            signal_lost += 0.20;
+                            frags_to_remove.insert(0, i);
+                        } else {
+                            signal_lost += 0.005;
+                            cluster_frag_verts.append(rect);
+                        }
+                    } else {
+                        cluster_frag_verts.append(rect);
+                    }
+                    frag.update_custom(3.0 / fps, None, Some(0.75), None);
+                }
+                // println!("{}", cluster_frag_particles.len());
+                for i in frags_to_remove {
+                    cluster_frag_particles.remove(i);
+                }
+                cluster_frag_particles.retain(|frag| frag.lifetime > 0.0);
 
                 if carrying && y < -view_height {
                     carrying = false;
@@ -411,6 +465,7 @@ fn main() {
                 copy_to_buf(&laser_verts, &laser_buf);
                 copy_to_buf(&jump_verts, &jump_buf);
                 copy_to_buf(&cluster_verts, &cluster_buf);
+                copy_to_buf(&cluster_frag_verts, &cluster_frag_buf);
                 copy_to_buf(&particle_verts, &particle_buf);
                 copy_to_buf(&box_verts, &box_buf);
 
@@ -435,16 +490,20 @@ fn main() {
                 for i in 0..jump_verts.len() / 4 {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
+                encoder.set_vertex_buffer(1, Some(&cluster_buf), 0);
+                for i in 0..cluster_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
+                }
+                encoder.set_vertex_buffer(1, Some(&cluster_frag_buf), 0);
+                for i in 0..cluster_frag_verts.len() / 4 {
+                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
+                }
                 encoder.set_vertex_buffer(1, Some(&particle_buf), 0);
                 for i in 0..particle_verts.len() / 4 {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
                 encoder.set_vertex_buffer(1, Some(&box_buf), 0);
                 for i in 0..box_verts.len() / 4 {
-                    encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
-                }
-                encoder.set_vertex_buffer(1, Some(&cluster_buf), 0);
-                for i in 0..cluster_verts.len() / 4 {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
 
