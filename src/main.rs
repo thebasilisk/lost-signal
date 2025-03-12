@@ -1,5 +1,7 @@
+use std::f32::consts::PI;
+
 use hsv::hsv_to_rgb;
-use maths::{apply_rotation_float2, float2_add, float2_subtract, Float2, Float4};
+use maths::{apply_rotation_float2, float2_add, float2_subtract, scale2, Float2, Float4};
 use metal::MTLResourceOptions;
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSAnyEventMask, NSEventType};
@@ -36,7 +38,7 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
 const COLOR_STEPS : u32 = 7;
 fn stepped_hue(t : f64) -> f64 {
     let hue_step = 360 / COLOR_STEPS;
-    let hue = t * 360.0;
+    let hue = t * 360.0 - 20.0;
     let int_hue = hue as u32 / hue_step;
     (int_hue * hue_step) as f64
 }
@@ -51,6 +53,35 @@ struct Uniforms {
 
 fn rect_intersect (rect1 : &[vertex_t], rect2 : &[vertex_t]) -> bool {
     rect1[0].position.0 < rect2[1].position.0 && rect2[0].position.0 < rect1[1].position.0 && rect1[0].position.1 < rect2[2].position.1 && rect2[0].position.1 < rect1[2].position.1
+}
+
+struct Particle {
+    position : Float2,
+    velocity : Float2,
+    acceleration : Float2,
+    color : Float4,
+    lifetime : f32,
+}
+
+impl Particle {
+    fn spawn(location : Float2, max_velocity : f32, max_accel : f32, velocity_bias : Float2, color: Float4) -> Self {
+        let v_theta = random::<f32>() * 2.0 * PI;
+        let a_theta = random::<f32>() * 2.0 * PI;
+        Particle {
+            position: Float2(location.0 * (1.0 + random::<f32>() * 0.01 - 0.005), location.1 * (1.0 + random::<f32>() * 0.01 - 0.005)),
+            velocity: float2_add(Float2(v_theta.cos() * max_velocity, v_theta.sin() * max_velocity), velocity_bias),
+            acceleration: Float2(a_theta.cos() * max_accel, a_theta.sin() * max_accel),
+            color,
+            lifetime: 1.0
+        }
+    }
+    fn update(&mut self) {
+        self.lifetime -= random::<f32>() * 0.1;
+        // self.acceleration = scale2(self.acceleration, self.lifetime);
+        self.velocity = float2_add(self.acceleration, self.velocity);
+        self.velocity = scale2(self.velocity, self.lifetime);
+        self.position = float2_add(self.velocity, self.position);
+    }
 }
 
 fn main() {
@@ -96,7 +127,7 @@ fn main() {
     let path_x = 1024.0;
     let path_width = 150.0;
     let path_height = (2.0 * view_height) / num_path_spawns as f32;
-    let path_speed = 450.0;
+    let path_speed = 350.0;
 
     let projectile_width = 100.0;
     let projectile_height =  projectile_width / 10.0;
@@ -133,9 +164,12 @@ fn main() {
 
     let vert_buf = device.new_buffer_with_data(
         vertex_data.as_ptr() as *const _,
-        size_of::<vertex_t>() as u64 * 4 * 1024,
+        size_of::<vertex_t>() as u64 * 4 * 2048,
         MTLResourceOptions::CPUCacheModeDefaultCache | MTLResourceOptions::StorageModeManaged
     );
+
+    let mut particles : Vec<Particle> = Vec::new();
+    let particle_width = 10.0;
 
     let mut radius = 300.0;
     let mut signal_lost = 0.0;
@@ -180,11 +214,14 @@ fn main() {
                     accum = 0.0;
                 }
 
+
                 //build jumprope and move by speed
                 let mut jumps_to_remove = Vec::new();
                 for i in 0..jumprope_positions.len() {
                     jumprope_positions[i] -= jumprope_speed / fps;
                     let jump_rect = &mut build_rect(jumprope_x, jumprope_positions[i], jumprope_width, jumprope_height, 0.0, color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0)));
+                    particles.push(Particle::spawn(Float2(jumprope_x + view_width, jumprope_positions[i]), 10.0, 3.0, Float2(-5.0, 0.0), color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
+                    particles.push(Particle::spawn(Float2(jumprope_x - view_width, jumprope_positions[i]), 10.0, 3.0, Float2(5.0, 0.0), color_convert(hsv_to_rgb(stepped_hue(jumprope_ts[i]), 1.0, 1.0))));
                     if rect_intersect(&player_rect, jump_rect) {
                         if player_rect[0].color != jump_rect[0].color {
                             jumps_to_remove.insert(0, i);
@@ -206,6 +243,13 @@ fn main() {
                 if jumprope_positions.first().is_some_and(|&val| val < -view_height) {
                     jumprope_positions.remove(0);
                     jumprope_ts.remove(0);
+                }
+
+                particles.retain(|particle| particle.lifetime > 0.0);
+
+                for unit in particles.iter_mut() {
+                    unit.update();
+                    vertex_data.append(&mut build_rect(unit.position.0, unit.position.1, particle_width, particle_width, 0.0, Float4(unit.color.0, unit.color.1, unit.color.2, unit.lifetime)));
                 }
 
 
@@ -252,7 +296,7 @@ fn main() {
                     carrying = false;
                     goal_t = random();
                     goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 1.0, 1.0));
-                    signal_lost -= 0.25;
+                    signal_lost -= 0.5;
                     println!("+1");
                 }
                 if carrying {
@@ -263,13 +307,6 @@ fn main() {
                 if rect_intersect(&player_rect, &goal_verts) && stepped_hue(lerp_t) == stepped_hue(goal_t) {
                     carrying = true;
                 }
-                // if collision < 999 {
-                //     // path_positions.remove(collision);
-                //     // path_colors.remove(collision);
-                //     for _ in 0..4 {
-                //         vertex_data.remove(collision * 4);
-                //     }
-                // }
                 copy_to_buf(&vertex_data, &vert_buf);
 
                 let command_buffer = command_queue.new_command_buffer();
@@ -286,7 +323,7 @@ fn main() {
                 encoder.set_fragment_bytes(1, size_of::<Float2>() as u64, vec![Float2(x, y)].as_ptr() as *const _);
                 encoder.set_fragment_bytes(2, (size_of::<f32>()) as u64, vec![signal_lost].as_ptr() as *const _);
                 encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
-                for i in 0..path_count + jumprope_positions.len() {
+                for i in 0..path_count + jumprope_positions.len() + particles.len() {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64 + 1) * 4, 4);
                 }
 
