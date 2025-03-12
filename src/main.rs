@@ -143,6 +143,7 @@ fn main() {
     let shaderlib = get_library(&device);
 
     let render_pipeline = prepare_pipeline_state(&device, "box_vertex", "box_fragment", &shaderlib);
+    let target_pipeline = prepare_pipeline_state(&device, "box_vertex", "target_fragment", &shaderlib);
     let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "goal_fragment", &shaderlib);
     let command_queue = device.new_command_queue();
 
@@ -390,6 +391,7 @@ fn main() {
                 for bomb in clusters.iter_mut() {
                     let current_pos = bomb.update(1.0 / fps);
                     cluster_verts.append(&mut build_rect(current_pos.0, current_pos.1, cluster_width, cluster_width, 0.0, bomb.color));
+                    box_verts.append(&mut build_rect(bomb.end_pos.0, bomb.end_pos.1, width * 2.0, height * 2.0, 0.0, bomb.color));
                     if bomb.t >= CLUSTER_END_T {
                         let theta_step = 2.0 * PI / cluster_frag_count as f32;
                         for i in 0..cluster_frag_count {
@@ -502,10 +504,17 @@ fn main() {
                 for i in 0..particle_verts.len() / 4 {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
+                //player draw
                 encoder.set_vertex_buffer(1, Some(&box_buf), 0);
-                for i in 0..box_verts.len() / 4 {
+                encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+
+                //target draws
+                encoder.set_render_pipeline_state(&target_pipeline);
+                encoder.set_vertex_buffer(1, Some(&box_buf), 0);
+                for i in 1..box_verts.len() / 4 {
                     encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, (i as u64) * 4, 4);
                 }
+
 
                 encoder.set_render_pipeline_state(&goal_pipeline);
                 encoder.set_vertex_bytes(1, (size_of::<vertex_t>() * 4) as u64, goal_verts.as_ptr() as *const _);

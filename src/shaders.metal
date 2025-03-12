@@ -86,3 +86,29 @@ fragment float4 goal_fragment (
     float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), 1.0);
     return mix(in.color, grayscaled, clamped_t);
 }
+
+
+fragment float4 target_fragment (
+    const device uniforms *unis,
+    const device float2 *player_pos,
+    const device float *signal_lost,
+    ColorInOut in [[ stage_in ]]
+) {
+    float screen_x = unis[0].screen_x;
+    float screen_y = unis[0].screen_y;
+    float radius = unis[0].radius;
+    float2 pos_norm = float2((player_pos[0].x + screen_x) / 2.0, (-player_pos[0].y + screen_y) / 2.0);
+    float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), in.color.a);
+    float t = saturate((distance(pos_norm, in.position.xy) / radius) + signal_lost[0]);
+    float4 color_out = mix(in.color, grayscaled, t);
+
+    float2 coords = float2(in.uv.x - 0.5, in.uv.y - 0.5);
+    coords = abs(coords);
+    float r = 0.08;
+    float w = 0.3;
+
+    float d = length(coords-min(coords.x+coords.y, w )*0.5) - r;
+    if (d > 0) discard_fragment();
+
+    return color_out;
+}
