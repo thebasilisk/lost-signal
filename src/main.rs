@@ -34,6 +34,20 @@ fn color_convert(int_color : (u8,u8,u8)) -> Float4 {
 //  want to decide on whether same color is safe or different color is safe
 //  I think same color being safe makes sense, then also as you lose signal you have to just dodge
 //  unclear what that means for the jumpropes, maybe color band is pretty lenient
+//
+// check out oklab color gradient
+//
+//  stretch ideas
+//      jumpropes represent game music and are the waveform with strong aura/glow
+//      music augmentation based on the player life
+//      interesting environmental barriers like maybe mirrors or colored walls
+//          player should be able to create / interact with these walls somehow
+//          being static parts of the environment would be kind of dull
+//  boss ideas
+//      cool 3d visuals using z axis for stuff
+//      gravity bending projectiles and causing simultaneous redshift
+//
+//
 
 
 const COLOR_STEPS : u32 = 7;
@@ -144,7 +158,8 @@ fn main() {
 
     let render_pipeline = prepare_pipeline_state(&device, "box_vertex", "box_fragment", &shaderlib);
     let target_pipeline = prepare_pipeline_state(&device, "box_vertex", "target_fragment", &shaderlib);
-    let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "goal_fragment", &shaderlib);
+    // let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "goal_fragment", &shaderlib);
+    let goal_pipeline = prepare_pipeline_state(&device, "box_vertex", "scorezone_fragment", &shaderlib);
     let command_queue = device.new_command_queue();
 
     let mut score = 0;
@@ -216,7 +231,8 @@ fn main() {
     jumprope_ts.push(random::<f64>());
 
     //clusterbomb params
-    let cluster_spawn_start_score = 5;
+    let cluster_spawn_start_score = 0;
+    let cluster_spawn_increase_score = 8;
     let cluster_frag_count = 8;
     let cluster_width = 35.0;
     let cluster_frag_speed = 150.0;
@@ -384,8 +400,13 @@ fn main() {
                 // let last_vert = vertex_data.len() as u32 - 4;
 
                 if clusters.is_empty() {
+                    if score >= cluster_spawn_start_score {
+                        clusters.push(Clusterbomb::from_positions(Float2((random::<f32>() * 2.0 - 1.0) * view_width, (random::<f32>() * 2.0 - 1.0) * view_height), Float2(x + random::<f32>() * view_width / 4.0, y + random::<f32>() * view_height / 4.0), color_convert(hsv_to_rgb(stepped_hue(random()), 1.0, 1.0))));
+                    }
+                    if score >= cluster_spawn_increase_score {
+                        clusters.push(Clusterbomb::from_positions(Float2((random::<f32>() * 2.0 - 1.0) * view_width, (random::<f32>() * 2.0 - 1.0) * view_height), Float2(x + random::<f32>() * view_width / 4.0, y + random::<f32>() * view_height / 4.0), color_convert(hsv_to_rgb(stepped_hue(random()), 1.0, 1.0))));
+                    }
                     // clusters.push(Clusterbomb::new(Float2(x, y), (random::<f32>() * 2.0 - 1.0) * view_width / 2.0, random::<f32>() * view_height / 2.0, 100.0));
-                    clusters.push(Clusterbomb::from_positions(Float2((random::<f32>() * 2.0 - 1.0) * view_width, (random::<f32>() * 2.0 - 1.0) * view_height), Float2(x, y), color_convert(hsv_to_rgb(stepped_hue(random()), 1.0, 1.0))));
                 }
 
                 for bomb in clusters.iter_mut() {
@@ -450,7 +471,7 @@ fn main() {
                     jumprope_speed *= 1.05;
                     if score % 2 == 0 {
                         current_spawns = (current_spawns + 1).min(num_path_spawns);
-                        laser_trail_spawn_frames -= 5;
+                        // laser_trail_spawn_frames -= 5;
                     }
                     path_height = (2.0 * view_height) / current_spawns as f32;
                     score += 1;

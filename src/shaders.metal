@@ -104,11 +104,50 @@ fragment float4 target_fragment (
 
     float2 coords = float2(in.uv.x - 0.5, in.uv.y - 0.5);
     coords = abs(coords);
-    float r = 0.08;
-    float w = 0.3;
+    float r = 0.06;
+    float w = 0.4;
 
     float d = length(coords-min(coords.x+coords.y, w )*0.5) - r;
     if (d > 0) discard_fragment();
 
     return color_out;
+}
+
+fragment float4 scorezone_fragment (
+    const device float *t,
+    ColorInOut in [[ stage_in ]]
+) {
+    float2 coords0 = float2(in.uv.x - 0.5, in.uv.y - 0.5);
+    //float rdius = coords
+
+    float2 coords = float2(in.uv.x - 0.5, in.uv.y - 0.5) * 2.0;
+    float he = 1.2;
+    float ra = 0.2;
+
+    coords = abs(coords);
+    coords = float2(abs(coords.x-coords.y),1.0-coords.x-coords.y)/sqrt(2.0);
+
+    float p = (he-coords.y-0.25/he)/(6.0*he);
+    float q = coords.x/(he*he*16.0);
+    float h = q*q - p*p*p;
+
+    float x;
+    if( h>0.0 ) { float r = sqrt(h); x = pow(q+r,1.0/3.0)-pow(abs(q-r),1.0/3.0)*sign(r-q); }
+    else        { float r = sqrt(p); x = 2.0*r*cos(acos(q/(p*r))/3.0); }
+    x = min(x,sqrt(2.0)/2.0);
+
+    float2 z = float2(x,he*(1.0-2.0*x*x)) - coords;
+    float inner_d = (length(z) * sign(z.y)) - ra;
+
+    float2 coords1 = coords0 * 0.9;
+    float2 b = float2(0.06125, 0.06125);
+    float2 a = abs(coords1)-b;
+    float d = length(max(a,0.0)) + min(max(a.x,a.y),0.0);
+    //float annular_rect = sign(abs(d) - 0.2);
+
+    if ((sign(inner_d) == 1) && sign(d) == 1) discard_fragment();
+
+    float clamped_t = saturate(t[0]);
+    float4 grayscaled = float4(float3(in.color.r * 0.299 + 0.587 * in.color.g + in.color.b * 0.114), 0.0);
+    return mix(in.color, grayscaled, clamped_t);
 }
