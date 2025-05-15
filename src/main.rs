@@ -125,6 +125,7 @@ struct Clusterbomb {
     color : Float4,
     t : f32,
 }
+
 impl Clusterbomb {
     fn new(start_pos : Float2, x_vel : f32, y_vel : f32, y_accel : f32, color: Float4) -> Self {
         let end_pos = float2_add(start_pos, Float2(x_vel * CLUSTER_END_T, (y_vel * CLUSTER_END_T) - 0.5 * (y_accel * CLUSTER_END_T.powf(2.0))));
@@ -143,6 +144,64 @@ impl Clusterbomb {
         Clusterbomb { start_pos, end_pos, x_vel, y_vel, y_accel, color, t: 0.0 }
     }
 }
+
+//Chasers
+//Circle with a chunk out of it
+//circle is easy
+//check distance compare to radius
+//check radial distance and cut a chunk
+
+//logic of them
+//struct should have a position
+//struct needs internal attack timer
+//define a size
+//define a speed
+// initial speed component
+// innitial acceleration
+// some friction component
+//have a function for modifying rotation based on player position
+//struct needs a update function to evolve state over time
+
+
+const CHASER_ATTACK_TIMER : f32 = 5.0;
+struct Chaser {
+    position : Float2,
+    velocity : Float2,
+    rot : f32,
+    attack_t : f32,
+    initial_speed : f32,
+    accel : f32,
+    friction : f32,
+}
+
+impl Chaser {
+    fn new(position : Float2, rot : f32, initial_speed : f32, accel : f32, friction : f32) -> Self {
+        Chaser { position, velocity: Float2(0.0, 0.0), rot, attack_t: 0.0, initial_speed, accel, friction}
+    }
+    fn update(&mut self, delta_t : f32, player_pos : Float2) {
+        self.attack_t += delta_t;
+        if self.attack_t >= CHASER_ATTACK_TIMER {
+            self.attack();
+            self.attack_t = 0.0;
+        }
+        //update position
+        //add accel * normalized velocity
+        let accel_vec = scale2(self.velocity.normalized(), self.accel);
+        self.velocity = float2_add(self.velocity, accel_vec);
+        self.position = float2_add(self.position, self.velocity);
+        //same for friction
+        self.velocity = scale2(self.velocity, self.friction);
+        //choose directions
+        //get position difference vector
+        //call atan2 to get angle
+        //update current rot by scaled radial distance
+    }
+    fn attack(&mut self) {
+        //maybe doesn't need to be own function
+        self.velocity = Float2(self.rot.cos() * self.initial_speed, self.rot.sin() * self.initial_speed);
+    }
+}
+
 
 fn main() {
     let view_width = 1024.0;
@@ -176,8 +235,8 @@ fn main() {
     let mut color = color_convert(int_color);
 
     // spawning target and storing color
-    let goal_x = 0.0;
-    let goal_y = 600.0;
+    let mut goal_x = view_width * (random::<f32>() * 2.0 - 1.0);
+    let mut goal_y = view_height * (random::<f32>() * 2.0 - 1.0);
     let goal_width = 100.0;
     let goal_height = 100.0;
     let mut goal_t = random::<f64>();
@@ -239,6 +298,13 @@ fn main() {
 
     let mut clusters = Vec::new();
     let mut cluster_frag_particles = Vec::new();
+
+
+    //chaser params
+    let chaser_spawn_start_score = 0;
+    let chaser_width = 35.0;
+    let chaser_initial_speed = 600.0;
+    let chaser_initial_accel = 100.0;
 
     let laser_buf = device.new_buffer_with_data(
         laser_verts.as_ptr() as *const _,
@@ -469,6 +535,8 @@ fn main() {
                     signal_lost -= 0.25;
                     laser_speed *= 1.05;
                     jumprope_speed *= 1.05;
+                    goal_x = view_width * (random::<f32>() * 2.0 - 1.0);
+                    goal_y = view_height * (random::<f32>() * 0.5 + 0.3);
                     if score % 2 == 0 {
                         current_spawns = (current_spawns + 1).min(num_path_spawns);
                         // laser_trail_spawn_frames -= 5;
@@ -478,7 +546,7 @@ fn main() {
                     println!("+1");
                 }
                 if carrying {
-                    goal_color = color_convert(hsv_to_rgb(stepped_hue(goal_t), 0.0, 1.0));
+                    goal_color = Float4(0.0, 0.0, 0.0, 0.0);//color_convert(hsv_to_rgb(stepped_hue(goal_t), 0.0, 1.0));
                 }
                 let goal_verts = build_rect(goal_x, goal_y, goal_width, goal_height, 0.0, goal_color);
                 // let goal_rect = goal_verts.iter().map(|val| val.position).collect::<Vec<Float4>>();
